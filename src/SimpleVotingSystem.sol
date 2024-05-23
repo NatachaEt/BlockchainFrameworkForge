@@ -19,6 +19,7 @@ contract SimpleVotingSystem is AccessControl {
     mapping(uint => Candidate) public candidates;
     mapping(address => bool) public voters;
     uint[] private candidateIds;
+    uint public lastVoteTimeAllowed;
 
     modifier onlyOwner() {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Only the contract owner can perform this action");
@@ -40,6 +41,12 @@ contract SimpleVotingSystem is AccessControl {
         _;
     }
 
+    modifier canVote() {
+        require(currentStatus == WorkflowStatus.VOTE, "Voting is not active");
+        require(block.timestamp >= lastVoteTimeAllowed, "Voting is not allowed yet");
+        _;
+    }
+
     constructor() {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(ADMIN_ROLE, msg.sender);
@@ -48,6 +55,9 @@ contract SimpleVotingSystem is AccessControl {
     }
 
     function setWorkflowStatus(WorkflowStatus _status) public onlyAdmin {
+        if (_status == WorkflowStatus.VOTE) {
+            lastVoteTimeAllowed = block.timestamp + 1 hours; // Une heure après la mise à VOTE
+        }
         currentStatus = _status;
     }
 
@@ -71,7 +81,7 @@ contract SimpleVotingSystem is AccessControl {
         candidates[_candidateId].fundReceived += msg.value;
     }
 
-    function vote(uint _candidateId) public inStatus(WorkflowStatus.VOTE) {
+    function vote(uint _candidateId) public canVote inStatus(WorkflowStatus.VOTE) {
         require(!voters[msg.sender], "You have already voted");
         require(_candidateId > 0 && _candidateId <= candidateIds.length, "Invalid candidate ID");
 
@@ -91,5 +101,24 @@ contract SimpleVotingSystem is AccessControl {
     function getCandidate(uint _candidateId) public view returns (Candidate memory) {
         require(_candidateId > 0 && _candidateId <= candidateIds.length, "Invalid candidate ID");
         return candidates[_candidateId];
+    }
+
+    function completeVoting() public onlyAdmin inStatus(WorkflowStatus.VOTE) {
+        currentStatus = WorkflowStatus.COMPLETED;
+    }
+
+    function declareWinner() public view inStatus(WorkflowStatus.COMPLETED) returns (Candidate memory) {
+        require(candidateIds.length > 0, "No candidates available");
+        uint winningVoteCount = 0;
+        uint winningCandidateId = 0;
+        
+        for (uint i = 0; i < candidateIds.length; i++) {
+            if (candidates[candidateIds[i]].voteCount > winningVoteCount) {
+                winningVoteCount = candidates[candidateIds[i]].voteCount;
+                winningCandidateId = candidateIds[i];
+            }
+        }
+
+        return candidates[winningCandidateId];
     }
 }

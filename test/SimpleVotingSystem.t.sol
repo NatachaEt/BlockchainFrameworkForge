@@ -10,6 +10,9 @@ contract VotingTest is Test {
     address admin = address(1);
     address founder = address(2);
     address voter = address(3);
+    address voter1 = address(5);
+    address voter2 = address(4);
+    address voter3 = address(6);
 
     function setUp() public {
         voting = new SimpleVotingSystem();
@@ -32,10 +35,13 @@ contract VotingTest is Test {
         assertEq(voting.getCandidatesCount(), 1);
     }
 
-    function testAdminWorkflow() public {
-        voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.REGISTER_CANDIDATES);
-        voting.addCandidate("Candidate 2");
-        assertEq(voting.getCandidatesCount(), 1);
+    function testAdminWorkflowNotRegisterCandidates() public {
+        voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.FOUND_CANDIDATES);
+        try voting.addCandidate("Candidate 2") {
+            assert(false);
+        } catch Error(string memory) {
+            assert(true);
+        }
     }
 
     // function testFailAddCandidateWhenNotAdmin() public {
@@ -67,8 +73,11 @@ contract VotingTest is Test {
         voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.REGISTER_CANDIDATES);
         voting.addCandidate("Alice");
         voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.VOTE);
+        vm.warp(block.timestamp + 61 minutes);
+
         vm.prank(voter);
         voting.vote(1);  // Should pass now that we use the right address
+        vm.prank(admin);
         voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.COMPLETED);
         assertEq(voting.getTotalVotes(1), 1);
     }
@@ -76,16 +85,48 @@ contract VotingTest is Test {
     function testFailVoteNotInVoteStatus() public {
         voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.REGISTER_CANDIDATES);
         voting.addCandidate("Alice");
+
+        vm.warp(block.timestamp + 61 minutes);
         vm.prank(voter);
-        voting.vote(1);  // This should fail because we are not in VOTE status
+        voting.vote(1);
+        vm.expectRevert("Invalid operation at current workflow status");
     }
 
     function testOnlyOnceVotingPerPerson() public {
         voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.REGISTER_CANDIDATES);
         voting.addCandidate("Alice");
+
         voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.VOTE);
-        vm.prank(voter);
+        vm.warp(block.timestamp + 61 minutes);
+        vm.prank(voter2);
         voting.vote(1);
-        voting.vote(1);  // This should fail because the same person cannot vote twice
+        voting.vote(1);
+        vm.expectRevert("You have already voted");
+        voting.vote(1);
+    }
+
+    function testDeclareWinner() public {
+        vm.prank(admin);
+        voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.REGISTER_CANDIDATES);
+        voting.addCandidate("Alice");
+        voting.addCandidate("Bob");
+        voting.setWorkflowStatus(SimpleVotingSystem.WorkflowStatus.VOTE);
+        vm.warp(block.timestamp + 1 hours + 1 seconds);
+        
+        vm.prank(voter1);
+        voting.vote(1);  // Vote for Alice
+        
+        vm.prank(voter2);
+        voting.vote(2);  // Vote for Bob
+
+        vm.prank(voter3);
+        voting.vote(2);  // Vote for Bob again
+
+        vm.prank(admin);
+        voting.completeVoting();
+
+        SimpleVotingSystem.Candidate memory winner = voting.declareWinner();
+        assertEq(winner.name, "Bob");
+        assertEq(winner.voteCount, 2);
     }
 }
